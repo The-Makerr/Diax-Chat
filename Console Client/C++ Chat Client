@@ -1,0 +1,154 @@
+#define _CRT_SECURE_NO_WARNINGS
+#define _WINSOCK_DEPRECATED_NO_WARNINGS 
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <cstring>
+#include <cstdlib>
+#include <winsock2.h> // Include the Windows Sockets library
+#include <ws2tcpip.h> // For additional WinSock features
+#include <thread>
+#include <ctime>
+#include <map>
+#include <algorithm>
+#include <random>
+
+
+using namespace std;
+map<char, char> encryptionMapping;
+
+const std::string usernameFilename = "username.txt";
+
+bool hasUsername(const std::string& filename) {
+    std::ifstream file(filename);
+    return file.good();
+}
+
+std::string getUsername(const std::string& filename) {
+    std::ifstream file(filename);
+    std::string username;
+    if (file.is_open()) {
+        std::getline(file, username);
+        file.close();
+    }
+    return username;
+}
+
+void setUsername(const std::string& username, const std::string& filename) {
+    std::ofstream file(filename);
+    if (file.is_open()) {
+        file << username << "\n";
+        file.close();
+    }
+    else {
+        std::cerr << "Error opening file for writing." << std::endl;
+    }
+}
+std::string customEncrypt(const std::string& plaintext) {
+    std::string encryptedText = plaintext;
+    for (char& c : encryptedText) {
+            if (c >= 'a' && c <= 'z') {
+                c = 'z' - (c - 'a');
+            }
+            else if (c >= 'A' && c <= 'Z') {
+                c = 'Z' - (c - 'A');
+            }
+    }
+    return encryptedText;
+}
+
+std::string customDecrypt(const std::string& encryptedText) {
+    std::string decryptedText = encryptedText;
+    for (char& c : decryptedText) {
+            if (c >= 'a' && c <= 'z') {
+                c = 'a' + ('z' - c);
+            }
+            else if (c >= 'A' && c <= 'Z') {
+                c = 'A' + ('Z' - c);
+            }
+    }
+    return decryptedText;
+}
+
+void receiveMessages(SOCKET clientSocket) {
+    char buffer[4096]; // Increase buffer size if necessary
+
+    while (1) {
+        int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        if (bytesReceived == 0) {
+            std::cout << "Server disconnected." << std::endl;
+            break;
+        }
+        else if (bytesReceived < 0) {
+            std::cerr << "Error in receiving messages." << std::endl;
+            break;
+        }
+        else {
+            buffer[bytesReceived] = '\0';
+
+            // Decrypt and display the received message
+            std::string receivedMessage = customDecrypt(buffer);
+            std::cout << receivedMessage << std::endl;
+        }
+    }
+}
+
+
+int main() {
+    // Initialize WinSock
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed." << std::endl;
+        return 1;
+    }
+
+    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (clientSocket == INVALID_SOCKET) {
+        std::cerr << "Error in socket" << std::endl;
+        WSACleanup();
+        return 1;
+    }
+
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(8080); // Use the same port as your server
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Replace with the server's IP address
+
+    if (connect(clientSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        std::cerr << "Error in connection" << std::endl;
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    // Create a thread to receive messages from the server
+    std::thread receiveThread(receiveMessages, clientSocket);
+
+    char buffer[1024];
+    while (1) {
+        std::string username;
+        if (!hasUsername(usernameFilename)) {
+            std::cout << "Enter your username: ";
+            std::cin >> username;
+            setUsername("[" + username + "]", usernameFilename);
+        }
+        std::string message;
+        std::getline(std::cin, message);
+        std::string fullMessage = customEncrypt(getUsername(usernameFilename) + ": " + message);
+        if (message == "exit") {
+            send(clientSocket, fullMessage.c_str(), fullMessage.size(), 0);
+
+            // Properly close the client socket
+            shutdown(clientSocket, SD_SEND);
+            closesocket(clientSocket);
+            std::cout << "Connection terminated." << std::endl;
+            break;
+        }
+
+        send(clientSocket, fullMessage.c_str(), fullMessage.size(), 0);
+    }
+
+    closesocket(clientSocket);
+    WSACleanup();
+    return 0;
+}
